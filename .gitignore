@@ -1,0 +1,21 @@
+# Entorno de Python
+.venv/
+__pycache__/
+*.pyc
+
+# Datos (se descargan con preparar_datos.py)
+datos/
+descargas/
+
+# Modelos y cachés generados
+*.npz
+*.joblib
+
+# Resultados y figuras (se generan con experimentos.py)
+resultados.json
+figuras/
+
+# Documentos locales que no forman parte del repositorio
+articulo/
+presentacion/
+rubrica/
