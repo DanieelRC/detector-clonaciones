@@ -1,40 +1,57 @@
 # Detector de voces sintéticas en español
 
-Clasifica un audio en español como **voz real** o **voz sintética** y compara cinco configuraciones que se ejecutan en CPU:
+Decide si un audio en español es **voz real** o **voz sintética** (generada por clonación de voz) y compara cinco detectores que funcionan en CPU, sin tarjeta gráfica.
 
-| Configuración | Entrada | Clasificador | EER en prueba |
-|---|---|---|---|
-| LFCC + GMM | 20 LFCC + Δ + ΔΔ por ventana (60 valores) | Un GMM de 32 componentes por clase | 11.08 % |
-| LFCC + MLP | Media y desviación de los LFCC por audio (120 valores) | Perceptrón multicapa | 30.97 ± 0.92 % |
-| LFCC + LPC + MLP | Lo anterior más 16 coeficientes LPC (152 valores) | Perceptrón multicapa | 32.28 ± 0.39 % |
-| WavLM + RL | WavLM-base congelado, media de la capa 6 (768 valores) | Regresión logística con pesos de clase | 11.08 % |
-| WavLM + MLP | Los mismos 768 valores | Perceptrón multicapa | **9.05 ± 0.65 %** |
+| Detector | Qué mira del audio | Cómo decide |
+|---|---|---|
+| LFCC + GMM | 60 coeficientes LFCC de cada ventana de 20 ms con voz | Dos modelos de mezcla gaussiana (GMM): uno de voz real y otro de voz sintética |
+| LFCC + MLP | Las mismas ventanas | Perceptrón multicapa (MLP) que califica cada ventana; se promedian |
+| LFCC + LPC + MLP | Las mismas ventanas con 16 coeficientes de predicción lineal (LPC) más | Perceptrón multicapa |
+| WavLM + RL | Una capa de WavLM, un modelo de voz preentrenado | Regresión logística (RL) |
+| WavLM + MLP | La misma capa de WavLM | Perceptrón multicapa |
 
-Los MLP tienen una capa oculta de 32 unidades y se entrenan con cinco semillas (0 a 4); se reportan la media y la desviación estándar.
+Además, un **clasificador de control** usa solo la duración, la proporción de silencio y la frecuencia de muestreo original. Sirve para saber si el conjunto de datos tiene "atajos" que delatan la respuesta.
 
-Los datos son los 2 618 audios del subconjunto de detección de [HISPASpoof](https://huggingface.co/datasets/purdueviperlab/HISPASpoof) (535 reales y 2 083 de ElevenLabs, F5-TTS, XTTS-v2 y YourTTS). Se dividen **por hablante** en entrenamiento, validación y prueba (7, 5 y 6 hablantes), así que la prueba mide el desempeño con voces que el modelo no vio. El umbral de cada modelo se fija en validación.
+## Resultados
 
-> **Precaución al leer las cifras.** Un clasificador de control que solo ve la duración, la proporción de silencio y la frecuencia de muestreo original obtiene una EER de 2.57 %, porque en este conjunto cada generador entrega sus audios a una frecuencia distinta. Las cifras de los detectores son, por tanto, una cota optimista.
+EER (tasa de error igual: el punto donde las voces sintéticas aceptadas y las reales rechazadas son iguales; menor es mejor) en la partición de prueba:
 
-Proyecto del Equipo 1 (Chamaleon), Escuela Superior de Cómputo, IPN.
+| Detector | Prueba completa | Hablantes y generadores vistos | Hablantes nuevos | Generadores nuevos |
+|---|---|---|---|---|
+| LFCC + GMM | 11.87 % | 8.60 % | 17.53 % | **2.70 %** |
+| LFCC + MLP | 11.36 % | 2.17 % | 14.81 % | 6.97 % |
+| LFCC + LPC + MLP | 10.49 % | 1.24 % | 13.16 % | 5.92 % |
+| **WavLM + RL** | **4.17 %** | **0.22 %** | **0.58 %** | 3.33 % |
+| WavLM + MLP | 7.32 % | 0.24 % | 1.55 % | 6.78 % |
+| Control (sin escuchar la voz) | 6.46 % | 12.52 % | 8.04 % | 0.00 % |
+
+- **WavLM + RL** es el mejor detector y el único que supera al control. Generaliza a hablantes nuevos (0.58 %). Su punto débil es Fish-Speech: detecta el 72.5 % de esos audios.
+- Los modelos acústicos usan solo **ventanas con voz**. Si también ven el silencio, su EER baja a 4–4.5 %, porque el silencio de las grabaciones reales y sintéticas es distinto. Es un atajo, no detección de voz clonada.
+- El control obtiene 0.00 % con generadores nuevos porque Fish-Speech y XTTS-v1 entregan audio a frecuencias de muestreo que ningún audio real tiene.
+
+## Datos
+
+Se usa [HISPASpoof](https://huggingface.co/datasets/purdueviperlab/HISPASpoof) con su partición oficial:
+
+| Partición | Archivo | Audios usados |
+|---|---|---|
+| Entrenamiento | `train.tar` (6 GB) | Todos los reales y 1 050 sintéticos por generador |
+| Validación | `val.tar` (0.7 GB) | Todos |
+| Prueba | `test.tar` (9.4 GB) | Todos los reales; 600 por generador conocido y 1 200 por generador nuevo |
+
+La prueba incluye **6 hablantes** y **2 generadores** (Fish-Speech y XTTS-v1) que no aparecen en entrenamiento. Por eso los resultados se reportan en cuatro condiciones: prueba completa, hablantes y generadores vistos, hablantes nuevos y generadores nuevos.
 
 ## Requisitos
 
-- **Python 3.12** (también debería funcionar con 3.10 o 3.11).
-  En Windows usa el instalador oficial de [python.org](https://www.python.org/downloads/). El Python de MSYS2/MinGW no puede instalar PyTorch.
-- Unos **3 GB libres**: unos 730 MB de datos, unos 380 MB del modelo WavLM y unos 600 MB de cachés.
-- No hace falta GPU.
+- **Python 3.12** (también debería funcionar con 3.10 o 3.11). En Windows usa el instalador oficial de [python.org](https://www.python.org/downloads/). El Python de MSYS2/MinGW no puede instalar PyTorch.
+- **35 GB libres** durante la descarga. Al terminar el paso 1 se borran los `.tar` y quedan unos 6 GB de audios.
+- No hace falta tarjeta gráfica.
 
 ## Instalación
 
 ```bash
 git clone https://github.com/DanieelRC/detector-clonaciones.git
 cd detector-clonaciones
-```
-
-Crea y activa un entorno virtual:
-
-```bash
 python -m venv .venv
 ```
 
@@ -46,122 +63,54 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-Instala primero PyTorch para CPU (más ligero que la versión con CUDA) y después el resto:
-
 ```bash
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
 
-## Ejecución
-
-Ejecuta los pasos en este orden, con el entorno virtual activado y desde la raíz del proyecto.
-
-### 1. Descargar los datos y escribir el manifiesto
+## Ejecución: cuatro pasos
 
 ```bash
-python preparar_datos.py
+python paso1_preparar_datos.py          # descarga, elige los audios y escribe datos/manifiesto.csv
+python paso2_extraer_caracteristicas.py # convierte cada audio en números (WavLM, LFCC, LPC)
+python paso3_entrenar_y_evaluar.py      # entrena los cinco detectores y el control, mide y grafica
+python paso4_graficas.py                # (opcional) vuelve a dibujar las gráficas
 ```
 
-Descarga `val.tar` (unos 730 MB) y sus metadatos desde Hugging Face a `descargas/`, deja los audios en `datos/audios/` y escribe `datos/manifiesto.csv` con una fila por audio:
+| Paso | Qué hace | Tiempo aproximado (CPU de 6 núcleos) |
+|---|---|---|
+| 1 | Descarga unos 16 GB, extrae los ~17 000 audios elegidos y revisa que se puedan usar | 1–2 h, según la conexión |
+| 2 | WavLM (13 capas) y LFCC/LPC por ventana; se guardan en `caracteristicas/` | ~1.5 h |
+| 3 | Elige la capa de WavLM con validación, entrena, evalúa y guarda `resultados.json`, `puntuaciones.csv`, `modelos/` y `figuras/` | ~30 min |
 
-```
-archivo, etiqueta, generador, hablante, sr_original, duracion, particion, exclusion
-```
-
-- **Criterios de inclusión:** archivo legible, al menos 0.5 s, pico de al menos 1e-5 y al menos una ventana con energía suficiente. Con este archivo no se excluye ningún audio.
-- **Partición por hablante:** se buscan, con semilla 0, asignaciones de hablantes cercanas a 60/20/20 en audios reales y sintéticos. Cada partición debe tener las dos clases, los cuatro generadores y al menos 4 hablantes en validación y en prueba. Ningún hablante aparece en dos particiones.
-
-### 2. Extraer representaciones y entrenar el detector
-
-```bash
-python entrenar.py
-```
-
-- **Representaciones:** extrae y guarda en caché las de todos los audios.
-  - `wavlm.npz`: 768 valores por audio.
-  - `acusticas.npz`: cuadros LFCC, resúmenes de 120 y 152 valores y proporción de silencio.
-- **Tiempo:** la primera vez descarga `microsoft/wavlm-base`. La extracción tarda unos 20 minutos en una CPU de 6 núcleos; después, segundos.
-- **Detector:** al final entrena WavLM + regresión logística y lo guarda en `modelo.joblib` (normalización, clasificador y umbral) para el paso 4.
-
-### 3. Evaluar las cinco configuraciones
-
-```bash
-python experimentos.py
-```
-
-Entrena y evalúa las cinco configuraciones con el mismo manifiesto:
-
-- umbral fijado en validación;
-- en prueba: EER, AUC, exactitud y matriz de confusión;
-- diferencias de EER (aporte de LPC, MLP frente a regresión logística, MLP acústico frente a GMM) con intervalo del 95 % por remuestreo pareado de hablantes;
-- el control de duración, silencio y frecuencia original;
-- errores por generador y por frecuencia original;
-- costos de extracción, ajuste y latencia.
-
-Escribe:
-
-- `resultados.json`, con todas las cifras;
-- `puntuaciones.csv`, con una puntuación por archivo, configuración y semilla;
-- las figuras en `figuras/` (PDF y PNG).
-
-Para regenerar solo las figuras sin volver a entrenar:
-
-```bash
-python figuras.py
-```
-
-### 4. Analizar un audio
+Para analizar un audio con el mejor detector (WavLM + MLP):
 
 ```bash
 python detectar.py ruta/al/audio.wav
 ```
 
 ```
-Probabilidad de voz sintética: 100.0%
-Etiqueta: SINTÉTICA
+Probabilidad de voz sintética: 99.8%
+Resultado: SINTÉTICA
 ```
 
-Acepta `.wav`, `.flac`, `.mp3` y `.ogg`. Necesita `modelo.joblib`, que genera el paso 2. Solo analiza los primeros 4 segundos del audio.
-
-## Preprocesamiento y características
-
-- **Audio:** mono, 16 kHz y primeros 4 s, sin relleno. Se resta la media y el pico se escala a 0.95, para que el volumen de la grabación no sirva de pista.
-- **Ventanas:** de 20 ms cada 10 ms desde el inicio, con ventana Hann.
-- **LFCC:** FFT de 512 puntos, 40 filtros lineales de 0 a 8 kHz, DCT y 20 coeficientes (incluido c0), más Δ y ΔΔ.
-- **LPC:** orden 16 por autocorrelación y Levinson-Durbin, solo en las ventanas con RMS ≥ 1e-3.
-- **MLP:** 32 unidades ReLU, entropía cruzada con pesos de clase, Adam (1e-3) y lotes de 32. Se entrena hasta 50 épocas y se queda con los mejores pesos de validación, con parada tras 5 épocas sin mejora.
-
-## Estructura del repositorio
+## Archivos
 
 | Archivo | Contenido |
 |---|---|
-| `comun.py` | Preprocesamiento, LFCC, LPC, WavLM y cálculo de la EER |
-| `preparar_datos.py` | Descarga de HISPASpoof, criterios de inclusión, partición por hablante y manifiesto |
-| `entrenar.py` | Extracción de representaciones y detector desplegable (WavLM + RL) |
-| `experimentos.py` | Las cinco configuraciones, comparaciones, control y costos |
-| `figuras.py` | Figuras de los resultados |
-| `detectar.py` | Análisis de un audio con el modelo guardado |
+| `configuracion.py` | Todos los parámetros en un solo lugar: rutas, semillas, tamaños, capas, épocas |
+| `audio.py` | Cargar un audio, cortarlo en ventanas, LFCC, LPC y WavLM |
+| `modelos.py` | GMM, regresión logística y perceptrón multicapa |
+| `metricas.py` | Umbral, EER y remuestreo por hablante |
+| `paso1_…` a `paso4_…` | Los cuatro pasos, en orden |
+| `detectar.py` | Analiza un audio nuevo |
 
-El repositorio no incluye audios, modelos entrenados, cachés, resultados ni figuras; todo se genera con los pasos anteriores.
+## Cómo se evalúa
 
-## Reproducibilidad
-
-- Partición, MLP (semillas 0 a 4), GMM y remuestreo usan semillas fijas. Dos ejecuciones seguidas de `experimentos.py` producen las mismas cifras.
-- El GMM se ajusta con un solo hilo de cómputo, porque con varios hilos su resultado varía ligeramente entre ejecuciones.
-- Las cifras de este README se obtuvieron con:
-  - Python 3.12;
-  - torch 2.15.0 y torchaudio 2.11.1 (CPU);
-  - transformers 5.23.0;
-  - scikit-learn 1.9.1;
-  - NumPy 2.5.5.
-
-## Limitaciones
-
-- Se usa un solo archivo de HISPASpoof, con 7 hablantes de entrenamiento y 6 de prueba. Los intervalos por remuestreo de hablantes son exploratorios.
-- Los cuatro generadores aparecen en todas las particiones, así que no se evalúan generadores no vistos. Tampoco se evaluó la generalización a otros conjuntos de datos ni el audio comprimido.
-- La frecuencia de muestreo original y la duración permiten anticipar la etiqueta en este conjunto (ver el control).
-- El detector debe usarse como una **alerta** para verificar por otra vía, no como prueba forense.
+- El umbral de cada detector se fija en **validación**: el punto donde las voces sintéticas aceptadas (FAR) y las reales rechazadas (FRR) son iguales. Ese valor es la **tasa de error igual (EER)**.
+- En prueba se reportan EER, área bajo la curva ROC (AUC) y exactitud.
+- Los intervalos del 95 % se obtienen remuestreando **hablantes** de prueba.
+- Los perceptrones se entrenan con cinco semillas y se reporta la media.
 
 ## Créditos de los datos
 
