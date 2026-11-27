@@ -251,8 +251,20 @@ if __name__ == "__main__":
             latencia[nombre] = (time.perf_counter() - inicio) / len(muestra) * 1000
 
     # 10. Guardar
-    joblib.dump({"capa": mejor_capa, "escalador": escalador_wavlm, "regresion": regresion,
-                 "umbral": resultados[RL_WAVLM]["corridas"][0]["umbral"]}, CARPETA_MODELOS / "detector.joblib")
+    def umbral_de(nombre):
+        return resultados[nombre]["corridas"][0]["umbral"]
+
+    modelos_guardados = {
+        "lfcc_gmm": {"nombre": GMM, "gmm": gmm, "umbral": umbral_de(GMM)},
+        "lfcc_mlp": {"nombre": MLP_LFCC, "modelo": redes[(MLP_LFCC, 0)], "umbral": umbral_de(MLP_LFCC)},
+        "lfcc_lpc_mlp": {"nombre": MLP_LPC, "modelo": redes[(MLP_LPC, 0)], "umbral": umbral_de(MLP_LPC)},
+        "wavlm_rl": {"nombre": RL_WAVLM, "capa": mejor_capa, "escalador": escalador_wavlm, "regresion": regresion,
+                     "umbral": umbral_de(RL_WAVLM)},
+        "wavlm_mlp": {"nombre": MLP_WAVLM, "capa": mejor_capa, "escalador": escalador_wavlm, "red": redes[(MLP_WAVLM, 0)],
+                      "umbral": umbral_de(MLP_WAVLM)},
+    }
+    for archivo_modelo, contenido in modelos_guardados.items():
+        joblib.dump(contenido, CARPETA_MODELOS / f"{archivo_modelo}.joblib")
 
     with open(ARCHIVO_PUNTUACIONES, "w", newline="", encoding="utf-8") as f:
         escritor = csv.writer(f)

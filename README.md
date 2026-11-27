@@ -83,7 +83,24 @@ python paso4_graficas.py                # (opcional) vuelve a dibujar las gráfi
 | 2 | WavLM (13 capas) y LFCC/LPC por ventana; se guardan en `caracteristicas/` | ~1.5 h |
 | 3 | Elige la capa de WavLM con validación, entrena, evalúa y guarda `resultados.json`, `puntuaciones.csv`, `modelos/` y `figuras/` | ~30 min |
 
-Para analizar un audio con el mejor detector (WavLM + MLP):
+### Interfaz con votación de los cinco detectores
+
+```bash
+python interfaz.py
+```
+
+Abre una ventana mínima.
+
+- El botón **Elegir audio de prueba al azar** toma un audio de la partición de prueba y lo analiza con los cinco detectores.
+- Cada detector vota "clonada" si su puntuación alcanza el umbral que eligió en validación. Si 3 o más de los 5 votan "clonada", el resultado es **voz clonada**.
+- La ventana muestra la puntuación, el umbral y el voto de cada detector, la respuesta correcta y si la votación acertó.
+- **Escuchar** abre el audio con el reproductor del sistema.
+
+Sin ventana: `python interfaz.py --consola` imprime el mismo análisis.
+
+### Analizar un audio propio
+
+Para analizar un audio con el mejor detector (WavLM + regresión logística):
 
 ```bash
 python detectar.py ruta/al/audio.wav
@@ -103,7 +120,8 @@ Resultado: SINTÉTICA
 | `modelos.py` | GMM, regresión logística y perceptrón multicapa |
 | `metricas.py` | Umbral, EER y remuestreo por hablante |
 | `paso1_…` a `paso4_…` | Los cuatro pasos, en orden |
-| `detectar.py` | Analiza un audio nuevo |
+| `detectar.py` | Analiza un audio nuevo con el mejor detector |
+| `interfaz.py` | Ventana que analiza un audio de prueba al azar con los cinco detectores y decide por votación |
 
 ## Cómo se evalúa
 

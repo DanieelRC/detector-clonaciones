@@ -273,6 +273,40 @@ def main():
     eje.set_ylabel("EER en la prueba completa (%)")
     guardar(figura, "fig_control")
 
+    # Comparación de clasificadores: error, exactitud, tiempo de ajuste y tiempo de respuesta
+    costos = R["costos"]
+    figura, ejes = plt.subplots(1, 4, figsize=(17, 4.4), gridspec_kw={"wspace": 0.45})
+    paneles = [("EER en prueba (%)\nmenor es mejor", [100 * resumen(n) for n in CONFIGURACIONES], "%.2f", False),
+               ("Exactitud en prueba (%)\nmayor es mejor", [100 * resumen(n, medida="exactitud") for n in CONFIGURACIONES], "%.1f", False),
+               ("Tiempo de ajuste (s)\npor semilla, escala log.", [costos["ajuste_s"][n] for n in CONFIGURACIONES], "%.1f", True),
+               ("Respuesta por audio (ms)\nescala logarítmica", [costos["latencia_ms"][n] for n in CONFIGURACIONES], "%.0f", True)]
+    for eje, (titulo, valores, formato, logaritmica) in zip(ejes, paneles):
+        barras = eje.barh(range(len(CONFIGURACIONES)), valores, color=[COLOR[n] for n in CONFIGURACIONES])
+        eje.bar_label(barras, fmt=formato, fontsize=11, padding=3)
+        eje.set_yticks(range(len(CONFIGURACIONES)), CONFIGURACIONES if eje is ejes[0] else [""] * len(CONFIGURACIONES), fontsize=12)
+        eje.invert_yaxis(); eje.set_title(titulo, fontsize=13)
+        if logaritmica:
+            eje.set_xscale("log")
+        eje.set_xlim(right=max(valores) * (8 if logaritmica else 1.3))
+        if "Exactitud" in titulo:
+            eje.set_xlim(80, 100)
+    guardar(figura, "fig_clasificadores")
+
+    # Épocas de los perceptrones: en qué época se alcanzó el menor error de validación
+    redes = ["LFCC + MLP", "LFCC + LPC + MLP", "WavLM + MLP"]
+    figura, eje = plt.subplots(figsize=(9.5, 3.8))
+    for k, nombre in enumerate(redes):
+        mejores = [R["epocas"][f"{nombre} | {s}"] for s in range(5)]
+        x = k + np.linspace(-0.28, 0.28, 5)
+        eje.bar(x, [m + 5 for m in mejores], width=0.11, color="#D9DDE2", label="épocas recorridas" if k == 0 else None)
+        eje.bar(x, mejores, width=0.11, color=COLOR[nombre], label="mejor época (pesos guardados)" if k == 0 else None)
+        for xi, m in zip(x, mejores):
+            eje.text(xi, m + 6.5, str(m), ha="center", fontsize=10.5)
+    eje.axhline(100, color=PIZARRA, ls=":", lw=1); eje.text(-0.38, 102, "límite: 100 épocas", ha="left", fontsize=11)
+    eje.set_xticks(range(len(redes)), [f"{n}\nsemillas 0 a 4" for n in redes]); eje.set_ylabel("Épocas"); eje.set_ylim(0, 112)
+    eje.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=11)
+    guardar(figura, "fig_epocas")
+
     # Diagrama del flujo
     figura, eje = plt.subplots(figsize=(12, 4.6)); eje.axis("off"); eje.set_xlim(0, 12); eje.set_ylim(-0.05, 4.75)
 
