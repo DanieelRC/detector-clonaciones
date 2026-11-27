@@ -1,13 +1,20 @@
 # Detector de voces sintéticas en español
 
-Clasifica un audio en español como **voz real** o **voz sintética** y compara dos modelos que se ejecutan en CPU:
+Clasifica un audio en español como **voz real** o **voz sintética** y compara cinco configuraciones que se ejecutan en CPU:
 
-| Modelo | Cómo funciona | EER en prueba |
-|---|---|---|
-| **Modelo de referencia** | 20 coeficientes LFCC (+ Δ y ΔΔ) por ventana y un modelo de mezcla gaussiana (GMM) de 32 componentes por clase | 2.96 % |
-| **Modelo principal** | WavLM-base congelado: media temporal de la capa 6 (768 valores) y una regresión logística con pesos de clase | 4.49 % |
+| Configuración | Entrada | Clasificador | EER en prueba |
+|---|---|---|---|
+| LFCC + GMM | 20 LFCC + Δ + ΔΔ por ventana (60 valores) | Un GMM de 32 componentes por clase | 11.08 % |
+| LFCC + MLP | Media y desviación de los LFCC por audio (120 valores) | Perceptrón multicapa | 30.97 ± 0.92 % |
+| LFCC + LPC + MLP | Lo anterior más 16 coeficientes LPC (152 valores) | Perceptrón multicapa | 32.28 ± 0.39 % |
+| WavLM + RL | WavLM-base congelado, media de la capa 6 (768 valores) | Regresión logística con pesos de clase | 11.08 % |
+| WavLM + MLP | Los mismos 768 valores | Perceptrón multicapa | **9.05 ± 0.65 %** |
 
-Los datos son 2 618 audios del subconjunto de detección de [HISPASpoof](https://huggingface.co/datasets/purdueviperlab/HISPASpoof) (535 reales y 2 083 de ElevenLabs, F5-TTS, XTTS-v2 y YourTTS), divididos 60/20/20 en entrenamiento, validación y prueba. El umbral de decisión se fija en validación.
+Los MLP tienen una capa oculta de 32 unidades y se entrenan con cinco semillas (0 a 4); se reportan la media y la desviación estándar.
+
+Los datos son los 2 618 audios del subconjunto de detección de [HISPASpoof](https://huggingface.co/datasets/purdueviperlab/HISPASpoof) (535 reales y 2 083 de ElevenLabs, F5-TTS, XTTS-v2 y YourTTS). Se dividen **por hablante** en entrenamiento, validación y prueba (7, 5 y 6 hablantes), así que la prueba mide el desempeño con voces que el modelo no vio. El umbral de cada modelo se fija en validación.
+
+> **Precaución al leer las cifras.** Un clasificador de control que solo ve la duración, la proporción de silencio y la frecuencia de muestreo original obtiene una EER de 2.57 %, porque en este conjunto cada generador entrega sus audios a una frecuencia distinta. Las cifras de los detectores son, por tanto, una cota optimista.
 
 Proyecto del Equipo 1 (Chamaleon), Escuela Superior de Cómputo, IPN.
 
@@ -50,40 +57,52 @@ pip install -r requirements.txt
 
 Ejecuta los pasos en este orden, con el entorno virtual activado y desde la raíz del proyecto.
 
-### 1. Descargar y preparar los datos
+### 1. Descargar los datos y escribir el manifiesto
 
 ```bash
 python preparar_datos.py
 ```
 
-Descarga `val.tar` (unos 730 MB) y su archivo de metadatos desde Hugging Face a `descargas/` y arma esta estructura:
+Descarga `val.tar` (unos 730 MB) y sus metadatos desde Hugging Face a `descargas/`, deja los audios en `datos/audios/` y escribe `datos/manifiesto.csv` con una fila por audio:
 
 ```
-datos/
-├── train/{real,sintetico}/   1 570 audios
-├── val/{real,sintetico}/       524 audios
-└── test/{real,sintetico}/      524 audios
+archivo, etiqueta, generador, hablante, sr_original, duracion, particion, exclusion
 ```
 
-La división usa la semilla 0, así que siempre produce las mismas particiones.
+- **Criterios de inclusión:** archivo legible, al menos 0.5 s, pico de al menos 1e-5 y al menos una ventana con energía suficiente. Con este archivo no se excluye ningún audio.
+- **Partición por hablante:** se buscan, con semilla 0, asignaciones de hablantes cercanas a 60/20/20 en audios reales y sintéticos. Cada partición debe tener las dos clases, los cuatro generadores y al menos 4 hablantes en validación y en prueba. Ningún hablante aparece en dos particiones.
 
-### 2. Entrenar el modelo principal
+### 2. Extraer representaciones y entrenar el detector
 
 ```bash
 python entrenar.py
 ```
 
-La primera vez descarga los pesos de `microsoft/wavlm-base` y extrae una representación por audio. En una CPU de 6 núcleos tarda unos 15 minutos. Las representaciones se guardan en `feats_*.npz` y las siguientes ejecuciones tardan segundos. Al final imprime la EER, el AUC y la exactitud en prueba y guarda `modelo.joblib`.
+- **Representaciones:** extrae y guarda en caché las de todos los audios.
+  - `wavlm.npz`: 768 valores por audio.
+  - `acusticas.npz`: cuadros LFCC, resúmenes de 120 y 152 valores y proporción de silencio.
+- **Tiempo:** la primera vez descarga `microsoft/wavlm-base`. La extracción tarda unos 20 minutos en una CPU de 6 núcleos; después, segundos.
+- **Detector:** al final entrena WavLM + regresión logística y lo guarda en `modelo.joblib` (normalización, clasificador y umbral) para el paso 4.
 
-### 3. Comparar con el modelo de referencia y generar figuras
+### 3. Evaluar las cinco configuraciones
 
 ```bash
 python experimentos.py
 ```
 
-Calcula los LFCC (en caché en `lfcc_*.npz`), entrena los GMM, mide ambos modelos (EER con intervalo de confianza, AUC, exactitud, matriz de confusión, resultados por generador, control de frecuencia de muestreo y tiempos) y escribe:
+Entrena y evalúa las cinco configuraciones con el mismo manifiesto:
+
+- umbral fijado en validación;
+- en prueba: EER, AUC, exactitud y matriz de confusión;
+- diferencias de EER (aporte de LPC, MLP frente a regresión logística, MLP acústico frente a GMM) con intervalo del 95 % por remuestreo pareado de hablantes;
+- el control de duración, silencio y frecuencia original;
+- errores por generador y por frecuencia original;
+- costos de extracción, ajuste y latencia.
+
+Escribe:
 
 - `resultados.json`, con todas las cifras;
+- `puntuaciones.csv`, con una puntuación por archivo, configuración y semilla;
 - las figuras en `figuras/` (PDF y PNG).
 
 Para regenerar solo las figuras sin volver a entrenar:
@@ -99,20 +118,28 @@ python detectar.py ruta/al/audio.wav
 ```
 
 ```
-Probabilidad de voz sintética: 89.2%
+Probabilidad de voz sintética: 100.0%
 Etiqueta: SINTÉTICA
 ```
 
 Acepta `.wav`, `.flac`, `.mp3` y `.ogg`. Necesita `modelo.joblib`, que genera el paso 2. Solo analiza los primeros 4 segundos del audio.
 
+## Preprocesamiento y características
+
+- **Audio:** mono, 16 kHz y primeros 4 s, sin relleno. Se resta la media y el pico se escala a 0.95, para que el volumen de la grabación no sirva de pista.
+- **Ventanas:** de 20 ms cada 10 ms desde el inicio, con ventana Hann.
+- **LFCC:** FFT de 512 puntos, 40 filtros lineales de 0 a 8 kHz, DCT y 20 coeficientes (incluido c0), más Δ y ΔΔ.
+- **LPC:** orden 16 por autocorrelación y Levinson-Durbin, solo en las ventanas con RMS ≥ 1e-3.
+- **MLP:** 32 unidades ReLU, entropía cruzada con pesos de clase, Adam (1e-3) y lotes de 32. Se entrena hasta 50 épocas y se queda con los mejores pesos de validación, con parada tras 5 épocas sin mejora.
+
 ## Estructura del repositorio
 
 | Archivo | Contenido |
 |---|---|
-| `comun.py` | Preprocesamiento (16 kHz, mono, 4 s) y representación con WavLM |
-| `preparar_datos.py` | Descarga de HISPASpoof y partición 60/20/20 |
-| `entrenar.py` | Extracción de representaciones, regresión logística y umbral |
-| `experimentos.py` | Modelo de referencia LFCC + GMM, métricas y controles |
+| `comun.py` | Preprocesamiento, LFCC, LPC, WavLM y cálculo de la EER |
+| `preparar_datos.py` | Descarga de HISPASpoof, criterios de inclusión, partición por hablante y manifiesto |
+| `entrenar.py` | Extracción de representaciones y detector desplegable (WavLM + RL) |
+| `experimentos.py` | Las cinco configuraciones, comparaciones, control y costos |
 | `figuras.py` | Figuras de los resultados |
 | `detectar.py` | Análisis de un audio con el modelo guardado |
 
@@ -120,15 +147,21 @@ El repositorio no incluye audios, modelos entrenados, cachés, resultados ni fig
 
 ## Reproducibilidad
 
-- Particiones, regresión logística y GMM usan semillas fijas.
+- Partición, MLP (semillas 0 a 4), GMM y remuestreo usan semillas fijas. Dos ejecuciones seguidas de `experimentos.py` producen las mismas cifras.
 - El GMM se ajusta con un solo hilo de cómputo, porque con varios hilos su resultado varía ligeramente entre ejecuciones.
-- Las cifras de este README se obtuvieron con Python 3.12, torch 2.15.0 y torchaudio 2.11.1 (CPU), transformers 5.23.0 y scikit-learn 1.9.1.
+- Las cifras de este README se obtuvieron con:
+  - Python 3.12;
+  - torch 2.15.0 y torchaudio 2.11.1 (CPU);
+  - transformers 5.23.0;
+  - scikit-learn 1.9.1;
+  - NumPy 2.5.5.
 
 ## Limitaciones
 
-- Se usa un solo archivo de HISPASpoof, y la partición es por audio, no por hablante, así que los mismos hablantes aparecen en entrenamiento y en prueba.
-- No se evaluó la generalización a otros conjuntos de datos (por ejemplo, entrenar con HABLA y probar con HISPASpoof) ni el audio comprimido.
-- El detector debe usarse como una **alerta** para verificar por otra vía, no como prueba forense: con el umbral elegido, alrededor de 5 de cada 100 voces reales se marcan como sintéticas.
+- Se usa un solo archivo de HISPASpoof, con 7 hablantes de entrenamiento y 6 de prueba. Los intervalos por remuestreo de hablantes son exploratorios.
+- Los cuatro generadores aparecen en todas las particiones, así que no se evalúan generadores no vistos. Tampoco se evaluó la generalización a otros conjuntos de datos ni el audio comprimido.
+- La frecuencia de muestreo original y la duración permiten anticipar la etiqueta en este conjunto (ver el control).
+- El detector debe usarse como una **alerta** para verificar por otra vía, no como prueba forense.
 
 ## Créditos de los datos
 

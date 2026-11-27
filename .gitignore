@@ -13,7 +13,9 @@ descargas/
 
 # Resultados y figuras (se generan con experimentos.py)
 resultados.json
+puntuaciones.csv
 figuras/
+*.log
 
 # Documentos locales que no forman parte del repositorio
 articulo/
